@@ -131,7 +131,8 @@ public class Player
         _danceYOffset = 0f;
     }
 
-    public void Update(GameTime gameTime, KeyboardState keyboard, List<Platform> platforms)
+    // solidRects contains all currently-solid platform rectangles (regular + non-broken breakable).
+    public void Update(GameTime gameTime, KeyboardState keyboard, IReadOnlyList<Rectangle> solidRects)
     {
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
@@ -179,17 +180,17 @@ public class Player
 
             _position.Y += _velocity.Y * dt;
 
-            foreach (var platform in platforms)
+            foreach (var rect in solidRects)
             {
-                if (!Bounds.Intersects(platform.Bounds)) continue;
+                if (!Bounds.Intersects(rect)) continue;
                 if (_velocity.Y >= 0)
                 {
-                    _position.Y = platform.Bounds.Top - CH;
+                    _position.Y = rect.Top - CH;
                     _jumpsLeft = MaxJumps;
                 }
                 else
                 {
-                    _position.Y = platform.Bounds.Bottom;
+                    _position.Y = rect.Bottom;
                 }
                 _velocity.Y = 0;
             }
@@ -228,30 +229,30 @@ public class Player
         _position.X += _velocity.X * dt;
         _position.X = MathHelper.Clamp(_position.X, 0, LevelWidth - CW);
 
-        foreach (var platform in platforms)
+        foreach (var rect in solidRects)
         {
-            if (!Bounds.Intersects(platform.Bounds)) continue;
+            if (!Bounds.Intersects(rect)) continue;
             if (_velocity.X > 0)
-                _position.X = platform.Bounds.Left - CW;
+                _position.X = rect.Left - CW;
             else if (_velocity.X < 0)
-                _position.X = platform.Bounds.Right;
+                _position.X = rect.Right;
             _velocity.X = 0;
         }
 
         // Move Y + collide
         _position.Y += _velocity.Y * dt;
 
-        foreach (var platform in platforms)
+        foreach (var rect in solidRects)
         {
-            if (!Bounds.Intersects(platform.Bounds)) continue;
+            if (!Bounds.Intersects(rect)) continue;
             if (_velocity.Y >= 0)
             {
-                _position.Y = platform.Bounds.Top - CH;
+                _position.Y = rect.Top - CH;
                 _jumpsLeft = MaxJumps;
             }
             else
             {
-                _position.Y = platform.Bounds.Bottom;
+                _position.Y = rect.Bottom;
             }
             _velocity.Y = 0;
         }
