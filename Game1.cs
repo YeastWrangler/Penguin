@@ -4,19 +4,28 @@ using Microsoft.Xna.Framework.Input;
 
 namespace PenguinPlatformer;
 
-public enum GameState { Playing, GameOver }
+public enum GameState { Playing, Dancing, LevelComplete, GameOver }
 
 public struct SnowParticle
 {
     public Vector2 Position;
     public float Speed;
     public int Size;
-    public float Drift; // gentle horizontal drift
+    public float Drift;
+}
+
+public struct CelebParticle
+{
+    public Vector2 Position;
+    public Vector2 Velocity;
+    public Color Color;
+    public float Life;     // remaining seconds
+    public float MaxLife;
+    public int Size;
 }
 
 public class Game1 : Game
 {
-    // Starting position: on top of ground (ground top = 520, player height = 46)
     private static readonly Vector2 StartPosition = new Vector2(100, 474);
     private static readonly Vector2 LevelSize = new Vector2(4000, 600);
 
@@ -28,6 +37,8 @@ public class Game1 : Game
     private Player _player = null!;
     private readonly List<Platform> _platforms = new();
     private List<Enemy> _enemies = new();
+    private Fish _fish = null!;
+    private Goal _goal = null!;
     private Camera _camera = null!;
 
     private int _score;
@@ -35,8 +46,16 @@ public class Game1 : Game
     private GameState _gameState = GameState.Playing;
 
     private readonly List<SnowParticle> _snow = new();
+    private readonly List<CelebParticle> _celebParticles = new();
     private readonly Random _rng = new();
     private KeyboardState _prevKeyboard;
+
+    // Colours for celebration burst
+    private static readonly Color[] CelebColors =
+    {
+        Color.Gold, Color.Yellow, Color.LightBlue, Color.White,
+        Color.Pink, Color.Orange, Color.Cyan, Color.LimeGreen
+    };
 
     public Game1()
     {
@@ -47,10 +66,7 @@ public class Game1 : Game
         _graphics.PreferredBackBufferHeight = 600;
     }
 
-    protected override void Initialize()
-    {
-        base.Initialize();
-    }
+    protected override void Initialize() => base.Initialize();
 
     protected override void LoadContent()
     {
@@ -93,32 +109,29 @@ public class Game1 : Game
         var iceBlue = new Color(80, 160, 210);
         var iceLighter = new Color(100, 185, 230);
 
-        // Ground (full level width)
+        // Ground
         _platforms.Add(new Platform(0, 520, 4000, 80, iceBlue));
 
-        // Raised platforms — designed so the player can always reach the next one
-        // Format: (x, y, width, height)
-        // Each platform is within single-jump reach of adjacent platforms or ground
+        // Raised platforms
         _platforms.Add(new Platform(200,  420, 160, 20, iceLighter));   // P1
         _platforms.Add(new Platform(430,  350, 180, 20, iceLighter));   // P2
-        _platforms.Add(new Platform(680,  270, 140, 20, iceLighter));   // P3  (needs double jump from P2)
-        _platforms.Add(new Platform(870,  390, 130, 20, iceLighter));   // P4  (down from P3)
+        _platforms.Add(new Platform(680,  270, 140, 20, iceLighter));   // P3
+        _platforms.Add(new Platform(870,  390, 130, 20, iceLighter));   // P4
         _platforms.Add(new Platform(1060, 310, 170, 20, iceLighter));   // P5
-        _platforms.Add(new Platform(1290, 240, 190, 20, iceLighter));   // P6  (double jump from P5)
+        _platforms.Add(new Platform(1290, 240, 190, 20, iceLighter));   // P6  ← fish here
         _platforms.Add(new Platform(1530, 350, 150, 20, iceLighter));   // P7
         _platforms.Add(new Platform(1730, 420, 130, 20, iceLighter));   // P8
         _platforms.Add(new Platform(1920, 300, 200, 20, iceLighter));   // P9
-        _platforms.Add(new Platform(2170, 210, 160, 20, iceLighter));   // P10 (double jump)
+        _platforms.Add(new Platform(2170, 210, 160, 20, iceLighter));   // P10
         _platforms.Add(new Platform(2380, 380, 180, 20, iceLighter));   // P11
         _platforms.Add(new Platform(2610, 270, 150, 20, iceLighter));   // P12
         _platforms.Add(new Platform(2810, 350, 170, 20, iceLighter));   // P13
-        _platforms.Add(new Platform(3030, 250, 200, 20, iceLighter));   // P14 (double jump)
+        _platforms.Add(new Platform(3030, 250, 200, 20, iceLighter));   // P14
         _platforms.Add(new Platform(3280, 390, 130, 20, iceLighter));   // P15
         _platforms.Add(new Platform(3460, 300, 180, 20, iceLighter));   // P16
-        _platforms.Add(new Platform(3700, 220, 200, 20, iceLighter));   // P17 (double jump, near end)
+        _platforms.Add(new Platform(3700, 220, 200, 20, iceLighter));   // P17
 
-        // --- Enemies (walrus) ---
-        // Ground patrols (walrus Y = ground top 520 - enemy height 40 = 480)
+        // Ground-patrol walruses (Y = 520 - 40 = 480)
         _enemies.Add(new Enemy(new Vector2(360,  480), 150,  600));
         _enemies.Add(new Enemy(new Vector2(770,  480), 600,  1000));
         _enemies.Add(new Enemy(new Vector2(1380, 480), 1100, 1700));
@@ -127,37 +140,33 @@ public class Game1 : Game
         _enemies.Add(new Enemy(new Vector2(2950, 480), 2750, 3100));
         _enemies.Add(new Enemy(new Vector2(3400, 480), 3200, 3850));
 
-        // Platform patrols (walrus Y = platform top - 40)
-        // P1 top=420: walrusY=380, patrol within platform bounds 200..360-52=308
-        _enemies.Add(new Enemy(new Vector2(210, 380), 200, 340));
-        // P2 top=350: walrusY=310
-        _enemies.Add(new Enemy(new Vector2(450, 310), 430, 580));
-        // P3 top=270: walrusY=230
-        _enemies.Add(new Enemy(new Vector2(695, 230), 680, 788));
-        // P5 top=310: walrusY=270
-        _enemies.Add(new Enemy(new Vector2(1075, 270), 1060, 1178));
-        // P6 top=240: walrusY=200
-        _enemies.Add(new Enemy(new Vector2(1305, 200), 1290, 1427));
-        // P9 top=300: walrusY=260
-        _enemies.Add(new Enemy(new Vector2(1940, 260), 1920, 2068));
-        // P12 top=270: walrusY=230
-        _enemies.Add(new Enemy(new Vector2(2625, 230), 2610, 2708));
-        // P14 top=250: walrusY=210
-        _enemies.Add(new Enemy(new Vector2(3045, 210), 3030, 3178));
-        // P17 top=220: walrusY=180
-        _enemies.Add(new Enemy(new Vector2(3715, 180), 3700, 3848));
+        // Platform walruses (Y = platform top - enemy height 40)
+        _enemies.Add(new Enemy(new Vector2(210,  380), 200,  340));  // P1 top=420
+        _enemies.Add(new Enemy(new Vector2(450,  310), 430,  580));  // P2 top=350
+        _enemies.Add(new Enemy(new Vector2(695,  230), 680,  788));  // P3 top=270
+        _enemies.Add(new Enemy(new Vector2(1075, 270), 1060, 1178)); // P5 top=310
+        _enemies.Add(new Enemy(new Vector2(1305, 200), 1290, 1427)); // P6 top=240
+        _enemies.Add(new Enemy(new Vector2(1940, 260), 1920, 2068)); // P9 top=300
+        _enemies.Add(new Enemy(new Vector2(2625, 230), 2610, 2708)); // P12 top=270
+        _enemies.Add(new Enemy(new Vector2(3045, 210), 3030, 3178)); // P14 top=250
+        _enemies.Add(new Enemy(new Vector2(3715, 180), 3700, 3848)); // P17 top=220
+
+        // Fish power-up — centre of P6 (top = 240, fish height = 22 → Y = 218)
+        _fish = new Fish(new Vector2(1362, 218));
+
+        // Goal at the end of the level
+        _goal = new Goal(new Vector2(3870, 520));
     }
 
     protected override void Update(GameTime gameTime)
     {
         var keyboard = Keyboard.GetState();
-
-        if (keyboard.IsKeyDown(Keys.Escape))
-            Exit();
+        if (keyboard.IsKeyDown(Keys.Escape)) Exit();
 
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
         UpdateSnow(dt);
 
+        // ── GAME OVER ──────────────────────────────────────────────
         if (_gameState == GameState.GameOver)
         {
             if (keyboard.IsKeyDown(Keys.R) && !_prevKeyboard.IsKeyDown(Keys.R))
@@ -167,12 +176,38 @@ public class Game1 : Game
             return;
         }
 
+        // ── LEVEL COMPLETE ─────────────────────────────────────────
+        if (_gameState == GameState.LevelComplete)
+        {
+            if (keyboard.IsKeyDown(Keys.R) && !_prevKeyboard.IsKeyDown(Keys.R))
+                FullRestart();
+            _prevKeyboard = keyboard;
+            base.Update(gameTime);
+            return;
+        }
+
+        // ── DANCING ───────────────────────────────────────────────
+        if (_gameState == GameState.Dancing)
+        {
+            _player.Update(gameTime, keyboard, _platforms);
+            UpdateCelebParticles(dt);
+            _camera.Follow(_player.Position, LevelSize);
+            if (_player.DanceComplete)
+                _gameState = GameState.LevelComplete;
+            _prevKeyboard = keyboard;
+            base.Update(gameTime);
+            return;
+        }
+
+        // ── PLAYING ───────────────────────────────────────────────
         _player.Update(gameTime, keyboard, _platforms);
+        _fish.Update(gameTime);
+        _goal.Update(gameTime);
 
         foreach (var enemy in _enemies)
             enemy.Update(gameTime);
 
-        // Player-enemy collision
+        // Enemy ↔ player collisions
         for (int i = _enemies.Count - 1; i >= 0; i--)
         {
             var enemy = _enemies[i];
@@ -180,12 +215,10 @@ public class Game1 : Game
 
             var pr = _player.Bounds;
             var er = enemy.Bounds;
-
             if (!pr.Intersects(er)) continue;
 
-            // Stomp: player moving downward AND feet are near the top of the enemy
+            // Stomp: player falling + feet overlap only the top 18 px of the enemy
             bool stomp = _player.Velocity.Y > 0 && (pr.Bottom - er.Top) < 18;
-
             if (stomp)
             {
                 enemy.Kill();
@@ -194,14 +227,47 @@ public class Game1 : Game
             }
             else
             {
-                PlayerDied();
-                _prevKeyboard = keyboard;
-                base.Update(gameTime);
-                return;
+                // Side / bottom hit
+                bool died = _player.TakeHit(enemy.Bounds.Center.X);
+                if (died)
+                {
+                    PlayerDied();
+                    _prevKeyboard = keyboard;
+                    base.Update(gameTime);
+                    return;
+                }
+                // If not died: player shrunk + is now invincible — game continues
             }
         }
 
         _enemies.RemoveAll(e => !e.IsAlive);
+
+        // Fish power-up collection
+        if (!_fish.IsCollected && _player.Bounds.Intersects(_fish.Bounds))
+        {
+            if (_player.IsNormalSize)
+            {
+                _lives++;        // extra life when already big
+                _score += 500;
+            }
+            else
+            {
+                _player.GrowUp(); // restore to big when small
+                _score += 200;
+            }
+            _fish.Collect();
+        }
+
+        // Goal / level complete trigger
+        if (_player.Bounds.Intersects(_goal.TriggerBounds))
+        {
+            _player.StartDance();
+            SpawnCelebration();
+            _gameState = GameState.Dancing;
+            _prevKeyboard = keyboard;
+            base.Update(gameTime);
+            return;
+        }
 
         // Fell off the bottom of the level
         if (_player.Position.Y > 700)
@@ -233,6 +299,42 @@ public class Game1 : Game
         }
     }
 
+    private void SpawnCelebration()
+    {
+        _celebParticles.Clear();
+        var center = _player.Position + new Vector2(_player.CW / 2f, _player.CH / 2f);
+        for (int i = 0; i < 60; i++)
+        {
+            float angle = _rng.NextSingle() * MathF.PI * 2f;
+            float speed = _rng.Next(80, 420);
+            float life = _rng.NextSingle() * 1.8f + 0.6f;
+            _celebParticles.Add(new CelebParticle
+            {
+                Position = center,
+                Velocity = new Vector2(MathF.Cos(angle) * speed, MathF.Sin(angle) * speed - 250f),
+                Color = CelebColors[_rng.Next(CelebColors.Length)],
+                Life = life,
+                MaxLife = life,
+                Size = _rng.Next(4, 12)
+            });
+        }
+    }
+
+    private void UpdateCelebParticles(float dt)
+    {
+        for (int i = _celebParticles.Count - 1; i >= 0; i--)
+        {
+            var p = _celebParticles[i];
+            p.Velocity.Y += 600f * dt; // gravity on particles
+            p.Position += p.Velocity * dt;
+            p.Life -= dt;
+            if (p.Life <= 0)
+                _celebParticles.RemoveAt(i);
+            else
+                _celebParticles[i] = p;
+        }
+    }
+
     private void PlayerDied()
     {
         _lives--;
@@ -243,7 +345,7 @@ public class Game1 : Game
         else
         {
             _player.Reset(StartPosition);
-            BuildLevel(); // Respawn enemies each life
+            BuildLevel();
             _camera.Follow(StartPosition, LevelSize);
         }
     }
@@ -253,6 +355,7 @@ public class Game1 : Game
         _score = 0;
         _lives = 3;
         _gameState = GameState.Playing;
+        _celebParticles.Clear();
         _player.Reset(StartPosition);
         BuildLevel();
         _camera.Follow(StartPosition, LevelSize);
@@ -262,9 +365,8 @@ public class Game1 : Game
     {
         GraphicsDevice.Clear(new Color(20, 60, 130));
 
-        // Draw sky background (screen space)
+        // ── SKY + BACKGROUND (screen space) ──────────────────────
         _spriteBatch.Begin();
-        // Gradient sky using horizontal bands
         _spriteBatch.Draw(_pixel, new Rectangle(0,   0, 1024,  80), new Color(20,  60, 130));
         _spriteBatch.Draw(_pixel, new Rectangle(0,  80, 1024,  80), new Color(30,  80, 150));
         _spriteBatch.Draw(_pixel, new Rectangle(0, 160, 1024,  80), new Color(45, 100, 170));
@@ -272,37 +374,50 @@ public class Game1 : Game
         _spriteBatch.Draw(_pixel, new Rectangle(0, 320, 1024,  80), new Color(100,170, 220));
         _spriteBatch.Draw(_pixel, new Rectangle(0, 400, 1024, 200), new Color(130,200, 240));
 
-        // Distant icebergs (parallax at 0.3x speed)
+        // Parallax icebergs (0.3× scroll speed)
         float px = _camera.Position.X * 0.3f;
-        DrawIceberg(50  - (int)(px % 1024),       380, 120, 80);
-        DrawIceberg(350 - (int)(px % 1024),       400,  80, 60);
-        DrawIceberg(700 - (int)(px % 1024),       370, 150, 90);
-        DrawIceberg(1000 - (int)(px % 1024),      390,  90, 70);
-        DrawIceberg(1300 - (int)(px % 1024) + 80, 385, 110, 75);
+        DrawIceberg(50   - (int)(px % 1200),     380, 120, 80);
+        DrawIceberg(350  - (int)(px % 1200),     400,  80, 60);
+        DrawIceberg(700  - (int)(px % 1200),     370, 150, 90);
+        DrawIceberg(1000 - (int)(px % 1200) + 80, 390,  90, 70);
+        DrawIceberg(1300 - (int)(px % 1200) + 80, 385, 110, 75);
         _spriteBatch.End();
 
-        // Draw world objects (camera transform)
+        // ── WORLD OBJECTS (camera transform) ─────────────────────
         _spriteBatch.Begin(transformMatrix: _camera.Transform);
 
         foreach (var platform in _platforms)
             platform.Draw(_spriteBatch, _pixel);
+
+        _fish.Draw(_spriteBatch, _pixel);
+        _goal.Draw(_spriteBatch, _pixel);
 
         foreach (var enemy in _enemies)
             enemy.Draw(_spriteBatch, _pixel);
 
         _player.Draw(_spriteBatch, _pixel);
 
+        // Celebration particles (world space)
+        foreach (var p in _celebParticles)
+        {
+            float alpha = p.Life / p.MaxLife;
+            _spriteBatch.Draw(_pixel,
+                new Rectangle((int)p.Position.X - p.Size / 2, (int)p.Position.Y - p.Size / 2, p.Size, p.Size),
+                p.Color * alpha);
+        }
+
         _spriteBatch.End();
 
-        // Draw HUD and snow (screen space, on top)
+        // ── HUD + SNOW (screen space) ─────────────────────────────
         _spriteBatch.Begin();
 
+        // Snow
         foreach (var s in _snow)
-            _spriteBatch.Draw(_pixel, new Rectangle((int)s.Position.X, (int)s.Position.Y, s.Size, s.Size),
+            _spriteBatch.Draw(_pixel,
+                new Rectangle((int)s.Position.X, (int)s.Position.Y, s.Size, s.Size),
                 Color.White * 0.75f);
 
         DrawHud();
-
         _spriteBatch.End();
 
         base.Draw(gameTime);
@@ -310,54 +425,63 @@ public class Game1 : Game
 
     private void DrawIceberg(int x, int y, int w, int h)
     {
-        // Iceberg body
-        _spriteBatch.Draw(_pixel, new Rectangle(x, y + h / 3, w, h * 2 / 3),
-            new Color(180, 220, 240, 180));
-        // Snow cap (triangle approximated by two rects)
-        _spriteBatch.Draw(_pixel, new Rectangle(x + w / 4, y, w / 2, h / 3),
-            new Color(220, 240, 255, 160));
-        _spriteBatch.Draw(_pixel, new Rectangle(x + w / 3, y - h / 6, w / 3, h / 6),
-            new Color(235, 248, 255, 140));
+        _spriteBatch.Draw(_pixel, new Rectangle(x, y + h / 3, w, h * 2 / 3), new Color(180, 220, 240, 180));
+        _spriteBatch.Draw(_pixel, new Rectangle(x + w / 4, y, w / 2, h / 3), new Color(220, 240, 255, 160));
+        _spriteBatch.Draw(_pixel, new Rectangle(x + w / 3, y - h / 6, w / 3, h / 6), new Color(235, 248, 255, 140));
     }
 
     private void DrawHud()
     {
+        // HUD panel
+        _spriteBatch.Draw(_pixel, new Rectangle(0, 0, 1024, 44), Color.Black * 0.45f);
+
         if (_font != null)
         {
-            // Semi-transparent HUD panel
-            _spriteBatch.Draw(_pixel, new Rectangle(0, 0, 1024, 44), Color.Black * 0.45f);
-
             _spriteBatch.DrawString(_font, $"SCORE: {_score}", new Vector2(12, 8), Color.White);
             _spriteBatch.DrawString(_font, $"LIVES: {_lives}", new Vector2(200, 8), Color.White);
 
-            string controls = "Arrow/WASD: Move  |  Space/Up: Jump (x2)  |  Stomp Walruses!";
-            _spriteBatch.DrawString(_font, controls, new Vector2(12, 26), Color.LightCyan * 0.85f);
+            // Size indicator
+            string sizeText = _player.IsNormalSize ? "BIG" : "SMALL - find the fish!";
+            var sizeColor = _player.IsNormalSize ? Color.LightCyan : Color.Yellow;
+            _spriteBatch.DrawString(_font, sizeText, new Vector2(350, 8), sizeColor);
+
+            _spriteBatch.DrawString(_font,
+                "Arrows/WASD: Move  |  Space/Up: Jump ×2  |  Stomp walruses!  |  Collect the fish!",
+                new Vector2(12, 27), Color.LightCyan * 0.8f);
 
             if (_gameState == GameState.GameOver)
             {
-                // Dim overlay
                 _spriteBatch.Draw(_pixel, new Rectangle(0, 0, 1024, 600), Color.Black * 0.6f);
+                _spriteBatch.DrawString(_font, "GAME OVER",          new Vector2(400, 230), Color.OrangeRed);
+                _spriteBatch.DrawString(_font, $"Final Score: {_score}", new Vector2(390, 258), Color.White);
+                _spriteBatch.DrawString(_font, "Press R to Play Again", new Vector2(375, 288), Color.LightYellow);
+            }
 
-                _spriteBatch.DrawString(_font, "GAME OVER", new Vector2(390, 230), Color.OrangeRed);
-                _spriteBatch.DrawString(_font, $"Final Score: {_score}", new Vector2(415, 260), Color.White);
-                _spriteBatch.DrawString(_font, "Press R to Play Again", new Vector2(380, 295), Color.LightYellow);
+            if (_gameState == GameState.LevelComplete)
+            {
+                _spriteBatch.Draw(_pixel, new Rectangle(0, 0, 1024, 600), Color.Black * 0.5f);
+                _spriteBatch.DrawString(_font, "LEVEL COMPLETE!",      new Vector2(370, 220), Color.Gold);
+                _spriteBatch.DrawString(_font, $"Score: {_score}",     new Vector2(420, 252), Color.White);
+                _spriteBatch.DrawString(_font, "Press R to Play Again", new Vector2(375, 284), Color.LightYellow);
             }
         }
         else
         {
-            // Fallback HUD without font: coloured bars
-            // Score bar
+            // Fallback HUD (no font)
             _spriteBatch.Draw(_pixel, new Rectangle(10, 10, Math.Min(_score / 3 + 20, 300), 10), Color.Gold);
-            // Lives as hearts (red squares)
             for (int i = 0; i < _lives; i++)
                 _spriteBatch.Draw(_pixel, new Rectangle(10 + i * 18, 26, 14, 14), Color.Red);
 
-            if (_gameState == GameState.GameOver)
+            if (!_player.IsNormalSize)
+                _spriteBatch.Draw(_pixel, new Rectangle(220, 10, 12, 12), Color.Yellow);
+
+            if (_gameState == GameState.GameOver || _gameState == GameState.LevelComplete)
             {
                 _spriteBatch.Draw(_pixel, new Rectangle(0, 0, 1024, 600), Color.Black * 0.6f);
-                // "GAME OVER" in large pixel blocks
-                _spriteBatch.Draw(_pixel, new Rectangle(350, 240, 340, 50), Color.DarkRed);
-                _spriteBatch.Draw(_pixel, new Rectangle(354, 244, 332, 42), Color.Red);
+                var bannerColor = _gameState == GameState.LevelComplete ? Color.Gold : Color.DarkRed;
+                _spriteBatch.Draw(_pixel, new Rectangle(320, 240, 400, 60), bannerColor);
+                _spriteBatch.Draw(_pixel, new Rectangle(324, 244, 392, 52),
+                    _gameState == GameState.LevelComplete ? Color.Yellow : Color.Red);
             }
         }
     }
